@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.eggs/
+build/
+dist/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+next-env.d.ts
+.vercel/
+.npm/
+.pnpm-store/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+.openclaw/
+infra/openclaw/credentials/
+infra/openclaw/data/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local data
+data/
+storage/
+minio/
+postgres-data/
+
+# Logs
+*.log
+logs/

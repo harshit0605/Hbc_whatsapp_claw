@@ -1,0 +1,79 @@
+# OpenCLAW configuration for the society maintenance bot.
+#
+# This file is read by the OpenCLAW gateway at startup. The skills service
+# (services/skills) is exposed as a single MCP stdio server; OpenCLAW spawns
+# it and the agent calls its tools.
+
+agent:
+  id: society-bot
+  name: "Society Maintenance Assistant"
+  systemPromptFile: ./system_prompt.md
+
+  # LLM provider — use Anthropic Claude via the API key in env.
+  model:
+    provider: anthropic
+    name: claude-sonnet-4-6
+    temperature: 0.3
+    maxTokens: 1024
+
+# WhatsApp channel — Baileys (WhatsApp Web protocol).
+channels:
+  whatsapp:
+    enabled: true
+    # During first run, scan the QR shown in container logs to pair the SIM.
+    accounts:
+      - id: society-line
+        # dmPolicy: who can DM the bot. "allowlist" requires explicit allowFrom,
+        # "open" accepts any inbound DM. For a society pilot, "open" is fine
+        # since the bot itself filters by tower/flat onboarding.
+        dmPolicy: open
+        # Workers + admins are pre-added so the bot can message them first.
+        # Residents become addressable the moment they DM the bot.
+        allowFrom: []  # populated dynamically; admin portal writes here
+        sessionDmScope: per-jid
+        chunkSize: 4000
+        mediaMaxMb: 50
+
+# Plugin hooks — non-LLM logic that runs around each message turn.
+pluginHooks:
+  messageReceived: true   # required for media_handler + language_detect + audit
+  messageSent: true       # required for audit + critical_alert_router
+
+plugins:
+  - name: language_detect
+    path: ./plugins/language_detect.py
+  - name: media_handler
+    path: ./plugins/media_handler.py
+    env:
+      SKILLS_API_BASE_URL: ${SKILLS_API_BASE_URL}
+      SKILLS_API_TOKEN: ${SKILLS_API_TOKEN}
+  - name: audit_logger
+    path: ./plugins/audit_logger.py
+    env:
+      SKILLS_API_BASE_URL: ${SKILLS_API_BASE_URL}
+      SKILLS_API_TOKEN: ${SKILLS_API_TOKEN}
+  - name: worker_status_router
+    path: ./plugins/worker_status_router.py
+
+# MCP — our skills service runs as a stdio MCP server.
+mcp:
+  servers:
+    - id: society-skills
+      transport: stdio
+      command: ["python", "-m", "society_skills.main", "mcp"]
+      cwd: /app/services/skills
+      env:
+        DATABASE_URL: ${DATABASE_URL}
+        ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+        S3_ENDPOINT_URL: ${S3_ENDPOINT_URL}
+        S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+        S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+        S3_BUCKET: ${S3_BUCKET}
+        OPENCLAW_OUTBOUND_URL: ${OPENCLAW_OUTBOUND_URL}
+        OPENCLAW_OUTBOUND_TOKEN: ${OPENCLAW_OUTBOUND_TOKEN}
+        ADMIN_ALERT_JIDS: ${ADMIN_ALERT_JIDS}
+
+# Credentials + state persistence (Baileys session).
+storage:
+  credentialsDir: /data/credentials
+  backupBeforeWrite: true
