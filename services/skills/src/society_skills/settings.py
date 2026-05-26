@@ -34,7 +34,9 @@ class Settings(BaseSettings):
     # HTTP API
     skills_http_host: str = "0.0.0.0"
     skills_http_port: int = 8080
-    skills_http_internal_token: str = "dev-token"
+    # Shared bearer token between skills service ↔ admin portal ↔ OpenCLAW plugins.
+    # Set once in .env as SKILLS_API_TOKEN; consumed by all three.
+    skills_api_token: str = "dev-token"
     skills_media_url_ttl_seconds: int = 900
 
     # OpenCLAW outbound bridge

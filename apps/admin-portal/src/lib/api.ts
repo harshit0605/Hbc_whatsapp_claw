@@ -121,6 +121,8 @@ export const api = {
   getComplaint: (id: string) => req<Complaint>(`/complaints/${id}`),
   getComplaintAssignments: (id: string) =>
     req<Assignment[]>(`/complaints/${id}/assignments`),
+  getProposedWorkers: (id: string) =>
+    req<Worker[]>(`/complaints/${id}/proposed-workers`),
   setComplaintStatus: (id: string, status: ComplaintStatus) =>
     req<Complaint>(`/complaints/${id}/status`, {
       method: "POST",

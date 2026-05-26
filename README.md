@@ -77,11 +77,33 @@ pytest
 
 - **WhatsApp account**: use a dedicated SIM, not the founder's number. Baileys
   sessions are tied to a single WhatsApp account.
-- **Dispatch gate**: `send_dispatch_to_worker` is exposed only on the HTTP
-  API (`POST /complaints/{id}/dispatch`) — the agent's MCP tool catalog
+- **Dispatch gate**: dispatch is exposed only on the HTTP API
+  (`POST /complaints/{id}/dispatch`) — the agent's MCP tool catalog
   deliberately omits it, so the agent cannot dispatch on its own.
 - **Critical alerts**: set `ADMIN_ALERT_JIDS` to a comma-separated list of
-  WhatsApp JIDs (or a group JID). The agent calls `escalate_to_admin` for
-  any complaint classified as `critical`.
+  WhatsApp JIDs (or a group JID). Critical complaints auto-escalate from
+  inside `create_complaint` — no reliance on the agent remembering to call
+  `escalate_to_admin`.
+- **Voice notes**: `/transcribe` returns 501 by default. Set
+  `STT_PROVIDER_URL` to a Whisper-compatible endpoint to enable. Without it,
+  voice notes are still stored but the agent only sees the audio token.
+- **Token rotation**: the shared bearer (`SKILLS_API_TOKEN`) is used by the
+  admin portal, every OpenCLAW plugin, and the skills service. Rotate all
+  three together.
 - **Backups**: nightly `pg_dump` + nightly snapshot of
   `/data/credentials` (Baileys session) is recommended.
+
+## What v1 ships
+
+| Capability | Status |
+|---|---|
+| Resident onboarding (text/voice/photo, multi-language) | ✅ |
+| LLM classification + severity tagging (Claude + heuristic fallback) | ✅ |
+| Critical-issue auto-escalation to admin WhatsApp | ✅ |
+| Admin web portal: queue, ticket detail, residents, workers, analytics, settings | ✅ |
+| Human-gated worker dispatch with confirmation modal | ✅ |
+| Worker ACCEPT / DONE / HELP loop, resident status notifications, rating prompt | ✅ |
+| Server-ranked worker suggestions (category match + open load) | ✅ |
+| Audit log of every inbound/outbound WhatsApp message | ✅ |
+| Voice transcription wiring (proxy to your STT provider) | ✅ (pluggable) |
+| Baileys allowlist sync, SLA escalation jobs, photo retention policy, audit-iframe viewer | M4 |

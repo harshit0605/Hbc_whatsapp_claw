@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import type { Worker } from "@/lib/api";
 import { dispatchAction } from "./actions";
 
@@ -21,15 +21,8 @@ export function DispatchPanel({
   const [error, setError] = useState<string | null>(null);
   const [busy, start] = useTransition();
 
-  const ranked = useMemo(() => {
-    return [...workers]
-      .filter((w) => w.is_active)
-      .sort((a, b) => {
-        const aMatch = a.categories.includes(category) ? 0 : 1;
-        const bMatch = b.categories.includes(category) ? 0 : 1;
-        return aMatch - bMatch;
-      });
-  }, [workers, category]);
+  // Server already ranks by category match + open-load; we just show the list.
+  const ranked = workers;
 
   function approve() {
     if (!confirming) return;

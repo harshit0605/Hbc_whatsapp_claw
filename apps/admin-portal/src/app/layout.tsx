@@ -32,6 +32,7 @@ function Nav() {
         <Link href="/residents" className="text-sm text-muted hover:text-ink">Residents</Link>
         <Link href="/workers" className="text-sm text-muted hover:text-ink">Workers</Link>
         <Link href="/analytics" className="text-sm text-muted hover:text-ink">Analytics</Link>
+        <Link href="/settings" className="text-sm text-muted hover:text-ink">Settings</Link>
         <div className="ml-auto">
           <Link href="/api/auth/signout" className="text-sm text-muted hover:text-ink">
             Sign out

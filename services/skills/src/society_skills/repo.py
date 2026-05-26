@@ -20,22 +20,29 @@ from .models import (
 # ─────────────────────────── Residents ────────────────────────────────────
 
 
+# A resident may be linked to multiple flats. We always present the most
+# recently linked one to avoid non-determinism between calls.
+_RESIDENT_BASE_SQL = """
+select r.id, r.wa_jid, r.phone, r.display_name, r.language, r.status,
+       r.created_at, r.updated_at,
+       t.name as tower_name, f.flat_number as flat_number
+from resident r
+left join lateral (
+    select rf.flat_id, rf.role
+    from resident_flat rf
+    where rf.resident_id = r.id
+    order by case rf.role when 'owner' then 0 else 1 end, rf.flat_id desc
+    limit 1
+) rf on true
+left join flat  f on f.id = rf.flat_id
+left join tower t on t.id = f.tower_id
+"""
+
+
 async def get_resident_by_id(session: AsyncSession, resident_id: UUID) -> ResidentOut | None:
     row = (
         await session.execute(
-            text(
-                """
-                select r.id, r.wa_jid, r.phone, r.display_name, r.language, r.status,
-                       r.created_at, r.updated_at,
-                       t.name as tower_name, f.flat_number as flat_number
-                from resident r
-                left join resident_flat rf on rf.resident_id = r.id
-                left join flat f on f.id = rf.flat_id
-                left join tower t on t.id = f.tower_id
-                where r.id = :id
-                limit 1
-                """
-            ),
+            text(_RESIDENT_BASE_SQL + "where r.id = :id"),
             {"id": str(resident_id)},
         )
     ).mappings().first()
@@ -45,19 +52,7 @@ async def get_resident_by_id(session: AsyncSession, resident_id: UUID) -> Reside
 async def find_resident_by_jid(session: AsyncSession, wa_jid: str) -> ResidentOut | None:
     row = (
         await session.execute(
-            text(
-                """
-                select r.id, r.wa_jid, r.phone, r.display_name, r.language, r.status,
-                       r.created_at, r.updated_at,
-                       t.name as tower_name, f.flat_number as flat_number
-                from resident r
-                left join resident_flat rf on rf.resident_id = r.id
-                left join flat f on f.id = rf.flat_id
-                left join tower t on t.id = f.tower_id
-                where r.wa_jid = :jid
-                limit 1
-                """
-            ),
+            text(_RESIDENT_BASE_SQL + "where r.wa_jid = :jid"),
             {"jid": wa_jid},
         )
     ).mappings().first()
@@ -128,6 +123,12 @@ async def update_resident_profile(
     if tower_name and flat_number:
         tower_id = await ensure_tower(session, name=tower_name)
         flat_id = await ensure_flat(session, tower_id=tower_id, flat_number=flat_number)
+        # Re-link: drop any prior flat assignments for this resident so a
+        # correction ("oh I meant 1805") doesn't leave dangling links.
+        await session.execute(
+            text("delete from resident_flat where resident_id = :rid and flat_id <> :fid"),
+            {"rid": str(resident_id), "fid": flat_id},
+        )
         await session.execute(
             text(
                 """
@@ -139,26 +140,9 @@ async def update_resident_profile(
             {"rid": str(resident_id), "fid": flat_id},
         )
 
-    row = (
-        await session.execute(
-            text(
-                """
-                select r.id, r.wa_jid, r.phone, r.display_name, r.language, r.status,
-                       r.created_at, r.updated_at,
-                       t.name as tower_name, f.flat_number as flat_number
-                from resident r
-                left join resident_flat rf on rf.resident_id = r.id
-                left join flat f on f.id = rf.flat_id
-                left join tower t on t.id = f.tower_id
-                where r.id = :id
-                limit 1
-                """
-            ),
-            {"id": str(resident_id)},
-        )
-    ).mappings().first()
-    assert row is not None
-    return ResidentOut(**dict(row))
+    out = await get_resident_by_id(session, resident_id)
+    assert out is not None
+    return out
 
 
 async def list_residents(
@@ -171,20 +155,7 @@ async def list_residents(
         params["q"] = f"%{q}%"
     rows = (
         await session.execute(
-            text(
-                f"""
-                select r.id, r.wa_jid, r.phone, r.display_name, r.language, r.status,
-                       r.created_at, r.updated_at,
-                       t.name as tower_name, f.flat_number as flat_number
-                from resident r
-                left join resident_flat rf on rf.resident_id = r.id
-                left join flat f on f.id = rf.flat_id
-                left join tower t on t.id = f.tower_id
-                {where}
-                order by r.created_at desc
-                limit :limit
-                """
-            ),
+            text(_RESIDENT_BASE_SQL + f"{where} order by r.created_at desc limit :limit"),
             params,
         )
     ).mappings().all()
@@ -337,6 +308,49 @@ async def update_worker(
     ).mappings().first()
     assert row is not None
     return WorkerOut(**dict(row))
+
+
+async def get_worker_by_id(session: AsyncSession, worker_id: UUID) -> WorkerOut | None:
+    row = (
+        await session.execute(
+            text(
+                "select id, wa_jid, phone, name, categories, is_active, notes "
+                "from worker where id = :id"
+            ),
+            {"id": str(worker_id)},
+        )
+    ).mappings().first()
+    return WorkerOut(**dict(row)) if row else None
+
+
+async def propose_workers_for_complaint(
+    session: AsyncSession, *, category: str, limit: int = 5
+) -> list[WorkerOut]:
+    """Suggest workers ranked by category match, current load, and registration recency.
+
+    Lower open_count (taking less work right now) ranks higher; workers whose
+    `categories` contains the complaint category beat unrelated workers.
+    """
+    rows = (
+        await session.execute(
+            text(
+                """
+                select w.id, w.wa_jid, w.phone, w.name, w.categories, w.is_active, w.notes,
+                       (
+                           select count(*) from assignment a
+                           where a.worker_id = w.id and a.status in ('pending','accepted')
+                       ) as open_count,
+                       case when :cat = any(w.categories) then 0 else 1 end as cat_rank
+                from worker w
+                where w.is_active = true
+                order by cat_rank asc, open_count asc, w.name asc
+                limit :limit
+                """
+            ),
+            {"cat": category, "limit": limit},
+        )
+    ).mappings().all()
+    return [WorkerOut(**{k: v for k, v in r.items() if k not in ("open_count", "cat_rank")}) for r in rows]
 
 
 async def find_worker_by_jid(session: AsyncSession, wa_jid: str) -> WorkerOut | None:
@@ -753,6 +767,65 @@ async def count_complaints_by_status(session: AsyncSession) -> dict[str, int]:
         )
     ).all()
     return {str(s): int(c) for s, c in rows}
+
+
+async def count_complaints_by_category(session: AsyncSession) -> dict[str, int]:
+    rows = (
+        await session.execute(
+            text("select category, count(*) from complaint group by category order by 2 desc")
+        )
+    ).all()
+    return {str(c): int(n) for c, n in rows}
+
+
+async def count_complaints_by_tower(session: AsyncSession) -> list[dict[str, Any]]:
+    rows = (
+        await session.execute(
+            text(
+                """
+                select coalesce(t.name, 'unknown') as tower, count(*) as count
+                from complaint c
+                left join tower t on t.id = c.tower_id
+                group by 1
+                order by 2 desc
+                """
+            )
+        )
+    ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def mean_time_to_resolve_seconds(session: AsyncSession) -> float | None:
+    row = (
+        await session.execute(
+            text(
+                """
+                select extract(epoch from avg(resolved_at - created_at))
+                from complaint
+                where resolved_at is not null
+                """
+            )
+        )
+    ).first()
+    return float(row[0]) if row and row[0] is not None else None
+
+
+async def list_admins(session: AsyncSession) -> list[dict[str, Any]]:
+    rows = (
+        await session.execute(
+            text(
+                "select id, email, role, wa_phone, wa_jid, created_at "
+                "from admin_user order by created_at"
+            )
+        )
+    ).mappings().all()
+    return [dict(r) for r in rows]
+
+
+async def delete_admin(session: AsyncSession, admin_id: UUID) -> None:
+    await session.execute(
+        text("delete from admin_user where id = :id"), {"id": str(admin_id)}
+    )
 
 
 # ─────────────────────────── helpers ──────────────────────────────────────

@@ -70,8 +70,8 @@ class ComplaintMediaOut(BaseModel):
     id: UUID
     kind: MediaKind
     storage_key: str
-    mime: str | None
-    bytes: int | None
+    mime: str | None = None
+    bytes: int | None = None
     presigned_url: str | None = None
 
 
@@ -100,12 +100,12 @@ class AssignmentOut(BaseModel):
     id: UUID
     complaint_id: UUID
     worker_id: UUID
-    worker_name: str | None
-    worker_phone: str | None
+    worker_name: str | None = None
+    worker_phone: str | None = None
     status: AssignmentStatus
     dispatched_at: datetime
-    closed_at: datetime | None
-    notes: str | None
+    closed_at: datetime | None = None
+    notes: str | None = None
 
 
 class ClassificationOut(BaseModel):

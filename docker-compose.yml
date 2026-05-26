@@ -52,10 +52,24 @@ services:
       "
     restart: "no"
 
-  skills:
+  skills-migrate:
     build:
       context: ./services/skills
       dockerfile: Dockerfile
+    image: society-skills:latest
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  skills:
+    image: society-skills:latest
+    pull_policy: never
     restart: unless-stopped
     env_file:
       - .env
@@ -68,45 +82,38 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+      skills-migrate:
+        condition: service_completed_successfully
     ports:
       - "8080:8080"
     command: ["python", "-m", "society_skills.main", "http"]
-
-  skills-migrate:
-    build:
-      context: ./services/skills
-      dockerfile: Dockerfile
-    env_file:
-      - .env
-    environment:
-      POSTGRES_HOST: postgres
-    depends_on:
-      postgres:
-        condition: service_healthy
-    command: ["alembic", "upgrade", "head"]
-    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
 
   openclaw:
+    # Build context is the repo root so the Dockerfile can COPY the skills
+    # service into the same image — it spawns the MCP stdio server from there.
     build:
-      context: ./infra/openclaw
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: infra/openclaw/Dockerfile
     restart: unless-stopped
     env_file:
       - .env
     environment:
       SKILLS_API_BASE_URL: http://skills:8080
     depends_on:
-      - skills
+      skills:
+        condition: service_healthy
     ports:
-      # Outbound HTTP plugin for the skills service to call into.
       - "7787:7787"
     volumes:
       - ./infra/openclaw/config.yaml:/openclaw/config.yaml:ro
       - ./infra/openclaw/system_prompt.md:/openclaw/system_prompt.md:ro
       - ./infra/openclaw/plugins:/openclaw/plugins:ro
       - openclaw-data:/data/credentials
-      # Skills service code so OpenCLAW can spawn its MCP server.
-      - ./services/skills:/app/services/skills:ro
 
   admin-portal:
     build:
@@ -118,7 +125,8 @@ services:
     environment:
       SKILLS_API_BASE_URL: http://skills:8080
     depends_on:
-      - skills
+      skills:
+        condition: service_healthy
     ports:
       - "3000:3000"
 

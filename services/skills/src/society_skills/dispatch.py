@@ -31,9 +31,13 @@ async def send_text(
     to_jid: str,
     body: str,
     quoted_message_id: str | None = None,
-    media_storage_keys: list[str] | None = None,
+    media_urls: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Send a WhatsApp text (with optional image attachments) to a JID."""
+    """Send a WhatsApp text (with optional image attachments) to a JID.
+
+    `media_urls` should be publicly fetchable URLs (e.g. S3 presigned). The
+    OpenCLAW gateway downloads them and forwards them as WhatsApp media.
+    """
     s = get_settings()
     payload: dict[str, Any] = {
         "to": to_jid,
@@ -41,10 +45,8 @@ async def send_text(
     }
     if quoted_message_id:
         payload["quoted_id"] = quoted_message_id
-    if media_storage_keys:
-        # The OpenCLAW gateway plugin we use accepts pre-uploaded keys and
-        # fetches them via S3. Adjust here if your plugin expects URLs.
-        payload["media"] = [{"storage_key": k} for k in media_storage_keys]
+    if media_urls:
+        payload["media"] = [{"url": u} for u in media_urls]
 
     async for attempt in AsyncRetrying(
         stop=stop_after_attempt(3),

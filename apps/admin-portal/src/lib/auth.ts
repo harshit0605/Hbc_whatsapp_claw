@@ -15,7 +15,14 @@ export const authOptions: NextAuthOptions = {
         if (!creds?.email || !creds.password) return null;
         try {
           const profile = await api.login(creds.email, creds.password);
-          return { id: profile.id, email: profile.email, name: profile.role };
+          return {
+            id: profile.id,
+            email: profile.email,
+            // NextAuth User type requires `name`; we use email as a friendly label
+            // and stash `role` on the user object for the jwt callback to pick up.
+            name: profile.email,
+            role: profile.role,
+          } as any;
         } catch {
           return null;
         }
@@ -25,12 +32,18 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        token.role = (user as any).name;
+        const u = user as any;
+        token.uid = u.id;
+        token.role = u.role;
+        token.email = u.email;
       }
       return token;
     },
     async session({ session, token }) {
-      if (token.role) (session.user as any).role = token.role;
+      if (session.user) {
+        (session.user as any).id = token.uid;
+        (session.user as any).role = token.role;
+      }
       return session;
     },
   },

@@ -1,5 +1,4 @@
 import { getServerSession } from "next-auth";
-import Image from "next/image";
 import { redirect } from "next/navigation";
 import { api } from "@/lib/api";
 import { authOptions } from "@/lib/auth";
@@ -13,10 +12,10 @@ export default async function TicketPage({ params }: { params: { id: string } })
   const session = await getServerSession(authOptions);
   if (!session) redirect("/login");
 
-  const [complaint, assignments, workers] = await Promise.all([
+  const [complaint, assignments, proposed] = await Promise.all([
     api.getComplaint(params.id),
     api.getComplaintAssignments(params.id),
-    api.listWorkers(),
+    api.getProposedWorkers(params.id),
   ]);
 
   return (
@@ -87,7 +86,7 @@ export default async function TicketPage({ params }: { params: { id: string } })
         <DispatchPanel
           complaintId={complaint.id}
           category={complaint.category}
-          workers={workers}
+          workers={proposed}
           adminId={(session.user as any)?.id}
         />
       </aside>

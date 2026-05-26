@@ -27,6 +27,40 @@ server: Server = Server("society-skills")
 async def list_tools() -> list[Tool]:
     return [
         Tool(
+            name="propose_workers",
+            description=(
+                "Return up to 8 workers ranked by category match + current load + "
+                "name. Use this BEFORE telling the resident an admin will assign — "
+                "so you can mention realistic ETA."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["complaint_id"],
+                "properties": {"complaint_id": {"type": "string", "format": "uuid"}},
+            },
+        ),
+        Tool(
+            name="update_complaint_status",
+            description=(
+                "Change a complaint's status. Allowed transitions: open ↔ triaging, "
+                "any → resolved/closed/rejected. Notifies the resident over WhatsApp."
+            ),
+            inputSchema={
+                "type": "object",
+                "required": ["complaint_id", "new_status"],
+                "properties": {
+                    "complaint_id": {"type": "string", "format": "uuid"},
+                    "new_status": {
+                        "type": "string",
+                        "enum": [
+                            "open", "triaging", "assigned", "in_progress",
+                            "resolved", "closed", "rejected",
+                        ],
+                    },
+                },
+            },
+        ),
+        Tool(
             name="register_or_get_resident",
             description=(
                 "Idempotently register a WhatsApp resident by their JID. If unknown, "
@@ -284,8 +318,19 @@ async def _create_complaint(args: dict[str, Any]) -> Any:
             flat_id=flat_id,
             media_keys=media_keys,
         )
-        is_critical = complaint.severity == "critical"
-        return {"complaint": complaint.model_dump(mode="json"), "is_critical": is_critical}
+    is_critical = complaint.severity == "critical"
+
+    # Auto-escalate critical issues regardless of whether the agent remembers
+    # to call escalate_to_admin. Belt-and-suspenders — life safety beats
+    # prompt-engineering hopes.
+    if is_critical:
+        body = _format_admin_alert(complaint, reason="auto-escalated: severity=critical")
+        try:
+            await broadcast_admin_alert(body)
+        except Exception as e:  # noqa: BLE001
+            log.warning("auto_escalate_failed", complaint_id=str(complaint.id), error=str(e))
+
+    return {"complaint": complaint.model_dump(mode="json"), "is_critical": is_critical}
 
 
 async def _escalate_to_admin(args: dict[str, Any]) -> Any:
@@ -370,6 +415,11 @@ async def _worker_status_update(args: dict[str, Any]) -> Any:
         if assignment is None:
             return {"error": "no open assignment for this worker"}
 
+        complaint = await repo.get_complaint(s, complaint_id=assignment.complaint_id)
+        resident = (
+            await repo.get_resident_by_id(s, complaint.resident_id) if complaint else None
+        )
+
         if action == "accept":
             await repo.update_assignment_status(
                 s, assignment_id=assignment.id, new_status="accepted"
@@ -377,6 +427,12 @@ async def _worker_status_update(args: dict[str, Any]) -> Any:
             await repo.update_complaint_status(
                 s, complaint_id=assignment.complaint_id, new_status="in_progress"
             )
+            if complaint and resident:
+                await _safe_notify(
+                    resident.wa_jid,
+                    f"Update on Ticket #{complaint.ticket_no}: {worker.name} has accepted "
+                    f"and is on the way. We'll let you know when it's done.",
+                )
             return {"ok": True, "complaint_id": str(assignment.complaint_id), "action": "accept"}
 
         if action == "done":
@@ -386,13 +442,16 @@ async def _worker_status_update(args: dict[str, Any]) -> Any:
             await repo.update_complaint_status(
                 s, complaint_id=assignment.complaint_id, new_status="resolved"
             )
+            if complaint and resident:
+                await _safe_notify(
+                    resident.wa_jid,
+                    f"Ticket #{complaint.ticket_no} marked DONE by {worker.name}.\n"
+                    f"Please reply with a number 1-5 to rate the service, or 'reopen' "
+                    f"if the issue is not actually fixed.",
+                )
             return {"ok": True, "complaint_id": str(assignment.complaint_id), "action": "done"}
 
         if action == "help":
-            # Don't change complaint status; alert admins.
-            complaint = await repo.get_complaint(
-                s, complaint_id=assignment.complaint_id
-            )
             if complaint:
                 body = (
                     f"🆘 Worker needs help on #{complaint.ticket_no}\n"
@@ -410,9 +469,59 @@ async def _worker_status_update(args: dict[str, Any]) -> Any:
             await repo.update_complaint_status(
                 s, complaint_id=assignment.complaint_id, new_status="open"
             )
+            if complaint and resident:
+                await _safe_notify(
+                    resident.wa_jid,
+                    f"Update on Ticket #{complaint.ticket_no}: previous assignment was "
+                    f"cancelled. We'll reassign shortly.",
+                )
             return {"ok": True, "complaint_id": str(assignment.complaint_id), "action": "cancel"}
 
         return {"error": f"unknown action: {action}"}
+
+
+async def _safe_notify(wa_jid: str, body: str) -> None:
+    from .dispatch import send_text
+
+    try:
+        await send_text(to_jid=wa_jid, body=body)
+    except Exception as e:  # noqa: BLE001
+        log.warning("resident_notify_failed", jid=wa_jid, error=str(e))
+
+
+async def _propose_workers(args: dict[str, Any]) -> Any:
+    async with session_scope() as s:
+        complaint = await repo.get_complaint(s, complaint_id=UUID(args["complaint_id"]))
+        if complaint is None:
+            return {"error": "complaint not found"}
+        workers = await repo.propose_workers_for_complaint(
+            s, category=complaint.category, limit=8
+        )
+        return {
+            "complaint_id": str(complaint.id),
+            "suggestions": [w.model_dump(mode="json") for w in workers],
+        }
+
+
+async def _update_complaint_status(args: dict[str, Any]) -> Any:
+    async with session_scope() as s:
+        c = await repo.update_complaint_status(
+            s,
+            complaint_id=UUID(args["complaint_id"]),
+            new_status=args["new_status"],
+        )
+    if c is None:
+        return {"error": "complaint not found"}
+    # Notify resident on every status change made via the agent path.
+    async with session_scope() as s:
+        resident = await repo.get_resident_by_id(s, c.resident_id)
+    if resident:
+        body = (
+            f"Update on Ticket #{c.ticket_no} — {c.title}\n"
+            f"Status: {c.status.replace('_', ' ')}."
+        )
+        await _safe_notify(resident.wa_jid, body)
+    return c.model_dump(mode="json")
 
 
 _HANDLERS = {
@@ -423,6 +532,8 @@ _HANDLERS = {
     "escalate_to_admin": _escalate_to_admin,
     "search_complaints": _search_complaints,
     "list_workers_by_category": _list_workers_by_category,
+    "propose_workers": _propose_workers,
+    "update_complaint_status": _update_complaint_status,
     "record_resident_rating": _record_resident_rating,
     "worker_status_update": _worker_status_update,
 }

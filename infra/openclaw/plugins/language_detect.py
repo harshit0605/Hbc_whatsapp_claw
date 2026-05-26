@@ -1,8 +1,6 @@
-"""OpenCLAW plugin: detect inbound language and stash it on the session.
-
-Runs on the `messageReceived` hook. Sets `session.locale` to a 2-letter ISO
-code so the agent system prompt can adapt. Conservative: only switches if
-confidence is high; otherwise leaves the existing locale alone.
+"""OpenCLAW plugin: detect inbound language; stash on the session and (best-
+effort) persist to the resident record so the LLM gets the right hint even
+after a session restart.
 """
 from __future__ import annotations
 
@@ -16,27 +14,29 @@ except Exception:  # pragma: no cover
     detect_langs = None  # type: ignore[assignment]
 
 
-# OpenCLAW expects each plugin file to expose async `on_message_received` and
-# optionally `on_message_sent`. The exact signature is flexible; we accept the
-# generic envelope and mutate `ctx.session`.
-
-
 SUPPORTED = {"en", "hi", "mr", "ta", "te", "kn", "bn", "gu", "pa"}
 
 
 async def on_message_received(ctx: Any, message: dict[str, Any]) -> dict[str, Any]:
     body: str = (message.get("text") or "").strip()
-    if not body or detect_langs is None:
+    if not body:
         return message
 
-    try:
-        guesses = detect_langs(body)
-    except Exception:
-        return message
+    locale: str | None = None
+    if detect_langs is not None:
+        try:
+            guesses = detect_langs(body)
+            best = guesses[0] if guesses else None
+            if best and best.lang in SUPPORTED and best.prob >= 0.85:
+                locale = best.lang
+        except Exception:
+            pass
+    if locale is None and any("ऀ" <= c <= "ॿ" for c in body):
+        locale = "hi"
 
-    best = guesses[0] if guesses else None
-    if best and best.lang in SUPPORTED and best.prob >= 0.85:
-        ctx.session.locale = best.lang
-    elif body and any("ऀ" <= c <= "ॿ" for c in body):
-        ctx.session.locale = "hi"
+    if locale:
+        ctx.session.locale = locale
+        # Inline the hint into message meta so the LLM always sees it even if
+        # OpenCLAW's prompt-time interpolation of {{session.locale}} is off.
+        message.setdefault("meta", {})["detected_locale"] = locale
     return message

@@ -7,6 +7,9 @@ On every inbound message that contains a `<media:image>`, `<media:audio>`, or
 2. Uploads it via the skills service's POST /media endpoint.
 3. Replaces the placeholder in the message body with a token of the form
    `[storage:<kind>:<key>]` so the LLM sees an opaque, safe reference.
+4. (Audio only) If OpenCLAW didn't already attach a transcript token, ask the
+   skills service to transcribe the audio and inline the result as
+   `(voice: "<transcript>")` so the agent can act on the content.
 
 The agent then passes those keys to `create_complaint` as `media_storage_keys`.
 """
@@ -31,26 +34,30 @@ async def on_message_received(ctx: Any, message: dict[str, Any]) -> dict[str, An
         return message
 
     new_tokens: list[str] = []
+    transcripts: list[str] = []
     for m in matches:
         kind = m.group(1)
-        # OpenCLAW exposes the binary via ctx.media.download(<token>) when the
-        # plugin is opted into hooks; signature varies by version. We try both
-        # the new and the legacy APIs.
         data = await _fetch_media(ctx, m.group(0))
         if data is None:
-            new_tokens.append(m.group(0))  # leave placeholder; agent will skip it
+            new_tokens.append(m.group(0))
             continue
         mime, blob = data
         key = await _upload(kind=kind, mime=mime, blob=blob)
         token = f"[storage:{kind}:{key}]"
         new_tokens.append(token)
+        if kind == "audio":
+            existing = getattr(ctx, "transcript", None) or message.get("transcript")
+            if not existing:
+                tr = await _transcribe(blob=blob, mime=mime)
+                if tr:
+                    transcripts.append(tr)
 
-    # Substitute each match in order.
     body_iter = iter(new_tokens)
     new_body = _TOKEN_RE.sub(lambda _m: next(body_iter), body)
+    for tr in transcripts:
+        new_body = f'(voice: "{tr}")\n{new_body}'
     message["text"] = new_body
 
-    # Also expose structured list for tools that want it directly.
     stored = message.setdefault("storage_keys", [])
     for tok in new_tokens:
         if tok.startswith("[storage:"):
@@ -83,3 +90,20 @@ async def _upload(*, kind: str, mime: str | None, blob: bytes) -> str:
         )
         resp.raise_for_status()
         return resp.json()["storage_key"]
+
+
+async def _transcribe(*, blob: bytes, mime: str | None) -> str | None:
+    """Best-effort voice-note transcription via skills service. Returns None
+    if the service doesn't have transcription configured."""
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{API_BASE}/transcribe",
+                headers={"Authorization": f"Bearer {API_TOKEN}"},
+                files={"file": ("voice.bin", blob, mime or "audio/ogg")},
+            )
+        if resp.status_code == 200:
+            return resp.json().get("text") or None
+    except Exception:
+        return None
+    return None
