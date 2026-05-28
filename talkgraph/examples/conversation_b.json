@@ -1,0 +1,25 @@
+{
+  "date": "2026-05-24",
+  "language": "en",
+  "duration": 80.0,
+  "segments": [
+    {"start": 0, "end": 7, "text": "Alice, did your remote-work proposal go through?", "speaker": "Carol"},
+    {"start": 7, "end": 15, "text": "Yes! Two days approved. Now I'm trying to set up a proper home office.", "speaker": "Alice"},
+    {"start": 15, "end": 22, "text": "I just bought a standing desk, I can share the link. We should compare notes.", "speaker": "Carol"},
+    {"start": 22, "end": 27, "text": "Please do. I'll research monitors this weekend.", "speaker": "Alice"}
+  ],
+  "insights": {
+    "title": "Alice's remote setup with Carol",
+    "summary": "Alice's remote-work request was approved for two days. She and Carol discuss setting up a home office; Carol offers a standing-desk recommendation.",
+    "date": "2026-05-24",
+    "participants": ["Alice", "Carol"],
+    "topics": ["remote work", "home office", "equipment"],
+    "decisions": ["Alice approved for two remote days"],
+    "commitments": [
+      {"text": "Research monitors for the home office", "owner": "Alice", "due": "this weekend", "status": "open"},
+      {"text": "Share standing-desk link", "owner": "Carol", "due": null, "status": "open"}
+    ],
+    "action_items": ["Alice researches monitors", "Carol shares desk link"],
+    "notable_quotes": [{"speaker": "Alice", "quote": "Two days approved."}]
+  }
+}

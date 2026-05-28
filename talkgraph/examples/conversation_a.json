@@ -1,0 +1,25 @@
+{
+  "date": "2026-05-10",
+  "language": "en",
+  "duration": 95.0,
+  "segments": [
+    {"start": 0, "end": 6, "text": "So how's the new apartment treating you, Alice?", "speaker": "Bob"},
+    {"start": 6, "end": 14, "text": "Honestly great, but the commute is brutal. I'm thinking of switching to remote two days a week.", "speaker": "Alice"},
+    {"start": 14, "end": 20, "text": "You should pitch it to your manager. I'll send you that proposal template I used.", "speaker": "Bob"},
+    {"start": 20, "end": 24, "text": "That'd help a lot. I'll draft something by Friday.", "speaker": "Alice"}
+  ],
+  "insights": {
+    "title": "Catch-up: Alice's move and remote-work plan",
+    "summary": "Bob and Alice catch up after Alice's move. The commute is hard, so Alice plans to request a partial remote schedule. Bob offers a proposal template he used.",
+    "date": "2026-05-10",
+    "participants": ["Alice", "Bob"],
+    "topics": ["apartment move", "commute", "remote work"],
+    "decisions": ["Alice will request two remote days per week"],
+    "commitments": [
+      {"text": "Draft a remote-work proposal", "owner": "Alice", "due": "Friday", "status": "open"},
+      {"text": "Send the proposal template to Alice", "owner": "Bob", "due": null, "status": "open"}
+    ],
+    "action_items": ["Alice drafts remote-work proposal", "Bob shares template"],
+    "notable_quotes": [{"speaker": "Alice", "quote": "the commute is brutal"}]
+  }
+}

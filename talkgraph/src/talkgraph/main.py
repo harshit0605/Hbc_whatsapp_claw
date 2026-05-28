@@ -1,0 +1,47 @@
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from openai import AsyncOpenAI
+
+from .api.routes import router
+from .graph.store import Neo4jGraphStore
+from .pipeline.diarize import LLMDiarizer
+from .pipeline.extract import OpenAIInsightExtractor
+from .pipeline.orchestrator import Orchestrator
+from .pipeline.transcribe import OpenAISTTProvider
+from .settings import get_settings
+from .storage import LocalStorage
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings = get_settings()
+    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    graph = Neo4jGraphStore(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password)
+    await graph.verify()
+    await graph.ensure_constraints()
+
+    app.state.storage = LocalStorage(settings.data_dir)
+    app.state.graph = graph
+    app.state.orchestrator = Orchestrator(
+        stt=OpenAISTTProvider(client, settings.openai_stt_model),
+        diarizer=LLMDiarizer(client, settings.openai_diarize_model),
+        extractor=OpenAIInsightExtractor(client, settings.openai_extract_model),
+        graph=graph,
+    )
+    try:
+        yield
+    finally:
+        await graph.close()
+        await client.close()
+
+
+app = FastAPI(title="talkgraph", version="0.1.0", lifespan=lifespan)
+app.include_router(router)
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
