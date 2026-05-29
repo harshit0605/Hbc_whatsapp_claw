@@ -62,6 +62,19 @@ async def list_commitments(request: Request, status: Optional[str] = "open"):
     return await request.app.state.graph.get_commitments(status=status)
 
 
+@router.get("/topics")
+async def list_topics(request: Request, limit: int = 50):
+    return await request.app.state.graph.list_topics(limit=limit)
+
+
+@router.get("/topics/{name}/related")
+async def get_related_topics(request: Request, name: str, limit: int = 20):
+    data = await request.app.state.graph.get_related_topics(name, limit=limit)
+    if data is None:
+        raise HTTPException(status_code=404, detail="topic not found")
+    return data
+
+
 @router.get("/topics/{name}")
 async def get_topic(request: Request, name: str):
     data = await request.app.state.graph.get_topic_view(name)

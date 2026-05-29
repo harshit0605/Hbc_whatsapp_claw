@@ -115,6 +115,29 @@ RETURN a.name AS a, b.name AS b,
                     | {text: m.text, owner: o.name, status: m.status, due: m.due}]}] AS conversations_raw
 """
 
+# Topic index: every topic with its reach (conversation count + unique participant
+# count). Participant uniqueness is computed in Python — a Cypher size() over a
+# pattern comprehension doesn't dedup.
+_TOPIC_INDEX = """
+MATCH (t:Topic)
+WITH t,
+     size([(c:Conversation)-[:ABOUT]->(t) | c]) AS conv_count,
+     [(p:Person)-[:PARTICIPATED_IN]->(:Conversation)-[:ABOUT]->(t) | p.name] AS participant_names
+RETURN t.name AS name, conv_count AS conversation_count, participant_names
+ORDER BY conv_count DESC, name ASC
+LIMIT $limit
+"""
+
+# Related topics: topics that co-occur with this one in the same conversations.
+# Co-occurrence is "appeared in the same conversation," not text similarity — a
+# poor man's cluster signal, no embedding model required.
+_TOPIC_RELATED = """
+MATCH (t:Topic {key: $key})
+RETURN t.name AS name,
+  [(t)<-[:ABOUT]-(c:Conversation)-[:ABOUT]->(other:Topic)
+   WHERE other.key <> $key | other.name] AS related_raw
+"""
+
 
 class Neo4jGraphStore:
     def __init__(self, uri: str, user: str, password: str):
@@ -286,3 +309,37 @@ class Neo4jGraphStore:
         )
         undated.sort(key=lambda c: c.get("conversation_id") or "")
         return dated + undated
+
+    async def list_topics(self, limit: int = 50) -> list[dict]:
+        """All topics ranked by reach: conversation_count desc, name asc."""
+        async with self._driver.session() as session:
+            result = await session.run(_TOPIC_INDEX, {"limit": limit})
+            rows = [record.data() async for record in result]
+        return [
+            {
+                "name": r["name"],
+                "conversation_count": r["conversation_count"],
+                "participant_count": len(set(r.get("participant_names") or [])),
+            }
+            for r in rows
+        ]
+
+    async def get_related_topics(self, name: str, limit: int = 20) -> Optional[list[dict]]:
+        """Topics that co-occur with this one in the same conversations.
+
+        Returns None when the topic does not exist (→ 404), an empty list when
+        the topic exists but has never been discussed alongside another topic.
+        Sorted by co_occurrence desc, name asc.
+        """
+        async with self._driver.session() as session:
+            result = await session.run(_TOPIC_RELATED, {"key": normalize_name(name)})
+            record = await result.single()
+        if record is None:
+            return None
+        counts: dict[str, int] = {}
+        for n in record.data().get("related_raw") or []:
+            counts[n] = counts.get(n, 0) + 1
+        ranked = sorted(
+            counts.items(), key=lambda kv: (-kv[1], kv[0])
+        )
+        return [{"name": n, "co_occurrence": c} for n, c in ranked[:limit]]
