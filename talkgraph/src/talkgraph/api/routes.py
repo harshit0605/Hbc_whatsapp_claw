@@ -46,6 +46,17 @@ async def get_person_commitments(
     return data
 
 
+@router.get("/people/{name_a}/with/{name_b}")
+async def get_dyad(request: Request, name_a: str, name_b: str):
+    try:
+        data = await request.app.state.graph.get_dyad_view(name_a, name_b)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if data is None:
+        raise HTTPException(status_code=404, detail="one or both people not found")
+    return data
+
+
 @router.get("/commitments")
 async def list_commitments(request: Request, status: Optional[str] = "open"):
     return await request.app.state.graph.get_commitments(status=status)

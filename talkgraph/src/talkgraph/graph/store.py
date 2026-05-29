@@ -99,6 +99,22 @@ RETURN p.name AS person,
       conversation_id: c.id, conversation_title: c.title, conversation_date: c.date}] AS commitments_raw
 """
 
+# Dyad view: every conversation A and B both participated in, with the topics /
+# decisions / commitments that were captured for those conversations. The
+# commitments list includes ALL owners in the conversation, not just A or B,
+# because that's the natural "what was promised in this conversation" view.
+_DYAD_VIEW = """
+MATCH (a:Person {key: $a_key})
+MATCH (b:Person {key: $b_key})
+RETURN a.name AS a, b.name AS b,
+  [(a)-[:PARTICIPATED_IN]->(c:Conversation)<-[:PARTICIPATED_IN]-(b)
+   | {id: c.id, title: c.title, date: c.date, summary: c.summary,
+      topics: [(c)-[:ABOUT]->(t:Topic) | t.name],
+      decisions: [(c)-[:REACHED]->(d:Decision) | d.text],
+      commitments: [(o:Person)-[:MADE]->(m:Commitment)-[:IN]->(c)
+                    | {text: m.text, owner: o.name, status: m.status, due: m.due}]}] AS conversations_raw
+"""
+
 
 class Neo4jGraphStore:
     def __init__(self, uri: str, user: str, password: str):
@@ -218,6 +234,31 @@ class Neo4jGraphStore:
             {"name": n, "conversation_count": c}
             for n, c in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
         ]
+        return data
+
+    async def get_dyad_view(self, name_a: str, name_b: str) -> Optional[dict]:
+        """Every conversation A and B both took part in, with topics / decisions /
+        commitments for each shared conversation. Sorted date desc, None last.
+
+        Returns None if either person is unknown. Raises ValueError if A and B
+        resolve to the same person — call the person view instead.
+        """
+        a_key = normalize_name(name_a)
+        b_key = normalize_name(name_b)
+        if a_key == b_key:
+            raise ValueError("dyad view requires two distinct people")
+        async with self._driver.session() as session:
+            result = await session.run(_DYAD_VIEW, {"a_key": a_key, "b_key": b_key})
+            record = await result.single()
+        if record is None:
+            return None
+        data = record.data()
+        convs = data.pop("conversations_raw", None) or []
+        dated = [c for c in convs if c.get("date")]
+        undated = [c for c in convs if not c.get("date")]
+        dated.sort(key=lambda c: (c["date"], c.get("id") or ""), reverse=True)
+        undated.sort(key=lambda c: c.get("id") or "")
+        data["conversations"] = dated + undated
         return data
 
     async def get_person_commitments(
