@@ -27,22 +27,22 @@ SET c.title=$title, c.summary=$summary, c.date=$date, c.source=$source,
     c.transcript=$transcript, c.audio_path=$audio_path, c.duration=$duration,
     c.action_items=$action_items, c.notable_quotes=$notable_quotes
 WITH c
-CALL { WITH c
+CALL (c) {
   UNWIND $participants AS p
   MERGE (person:Person {key: p.key}) ON CREATE SET person.name = p.name
   MERGE (person)-[:PARTICIPATED_IN]->(c)
 }
-CALL { WITH c
+CALL (c) {
   UNWIND $topics AS t
   MERGE (topic:Topic {key: t.key}) ON CREATE SET topic.name = t.name
   MERGE (c)-[:ABOUT]->(topic)
 }
-CALL { WITH c
+CALL (c) {
   UNWIND $decisions AS dtext
   CREATE (d:Decision {text: dtext, conversation_id: c.id})
   MERGE (c)-[:REACHED]->(d)
 }
-CALL { WITH c
+CALL (c) {
   UNWIND $commitments AS cm
   MERGE (owner:Person {key: cm.owner_key}) ON CREATE SET owner.name = cm.owner_name
   CREATE (m:Commitment {text: cm.text, status: cm.status, due: cm.due, conversation_id: c.id})
