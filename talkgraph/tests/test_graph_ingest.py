@@ -7,7 +7,6 @@ the MERGE query receives.
 
 import json
 
-from talkgraph.graph.store import Neo4jGraphStore
 from talkgraph.models import (
     Commitment,
     Insights,
@@ -16,70 +15,11 @@ from talkgraph.models import (
     TranscriptSegment,
 )
 
-
-class FakeRecord:
-    def __init__(self, data):
-        self._data = data
-
-    def data(self):
-        return self._data
-
-
-class FakeResult:
-    def __init__(self, record=None, rows=None):
-        self._record = record
-        self._rows = list(rows or [])
-
-    async def single(self):
-        return self._record
-
-    def __aiter__(self):
-        self._it = iter(self._rows)
-        return self
-
-    async def __anext__(self):
-        try:
-            return next(self._it)
-        except StopIteration:
-            raise StopAsyncIteration
-
-
-class FakeSession:
-    def __init__(self, driver):
-        self._driver = driver
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc):
-        return False
-
-    async def run(self, query, params=None):
-        self._driver.calls.append((query, params))
-        return self._driver.next_result
-
-
-class FakeDriver:
-    def __init__(self):
-        self.calls = []
-        self.next_result = FakeResult()
-
-    def session(self):
-        return FakeSession(self)
-
-    async def close(self):
-        return None
-
-
-def _store_with_fake():
-    store = Neo4jGraphStore.__new__(Neo4jGraphStore)
-    fake = FakeDriver()
-    store._driver = fake
-    return store, fake
+from _fakes import FakeRecord, FakeResult, store_with_fake
 
 
 async def test_ingest_builds_normalized_params():
-    store, fake = _store_with_fake()
+    store, fake = store_with_fake()
     insights = Insights(
         title="T",
         summary="S",
@@ -118,7 +58,7 @@ async def test_ingest_builds_normalized_params():
 
 
 async def test_person_view_normalizes_key_and_dedupes():
-    store, fake = _store_with_fake()
+    store, fake = store_with_fake()
     fake.next_result = FakeResult(
         record=FakeRecord(
             {

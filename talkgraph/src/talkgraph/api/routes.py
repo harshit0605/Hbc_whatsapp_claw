@@ -39,3 +39,11 @@ async def get_person(request: Request, name: str):
 @router.get("/commitments")
 async def list_commitments(request: Request, status: Optional[str] = "open"):
     return await request.app.state.graph.get_commitments(status=status)
+
+
+@router.get("/topics/{name}")
+async def get_topic(request: Request, name: str):
+    data = await request.app.state.graph.get_topic_view(name)
+    if data is None:
+        raise HTTPException(status_code=404, detail="topic not found")
+    return data

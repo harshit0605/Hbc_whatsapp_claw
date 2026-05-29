@@ -78,6 +78,15 @@ RETURN m.text AS text, m.status AS status, m.due AS due, owner.name AS owner,
 ORDER BY c.date DESC
 """
 
+# Topic timeline: which conversations is a topic discussed in, by whom, when.
+# Mirror of _PERSON_VIEW for the topic-centric axis.
+_TOPIC_VIEW = """
+MATCH (t:Topic {key: $key})
+RETURN t.name AS name,
+  [(c:Conversation)-[:ABOUT]->(t) | {id: c.id, title: c.title, date: c.date, summary: c.summary}] AS conversations,
+  [(p:Person)-[:PARTICIPATED_IN]->(:Conversation)-[:ABOUT]->(t) | p.name] AS participants_raw
+"""
+
 
 class Neo4jGraphStore:
     def __init__(self, uri: str, user: str, password: str):
@@ -168,3 +177,33 @@ class Neo4jGraphStore:
         async with self._driver.session() as session:
             result = await session.run(_COMMITMENTS, {"status": status})
             return [record.data() async for record in result]
+
+    async def get_topic_view(self, name: str) -> Optional[dict]:
+        """Topic-centric view: conversations the topic appears in + who's discussed it.
+
+        Conversations are sorted by date desc (None last). Participants are aggregated
+        across conversations with a per-person `conversation_count`, sorted by count
+        desc then name asc.
+        """
+        async with self._driver.session() as session:
+            result = await session.run(_TOPIC_VIEW, {"key": normalize_name(name)})
+            record = await result.single()
+        if record is None:
+            return None
+        data = record.data()
+        # date desc, None last; id is the stable tiebreak so undated conversations
+        # don't reshuffle between calls.
+        dated = [c for c in (data.get("conversations") or []) if c.get("date")]
+        undated = [c for c in (data.get("conversations") or []) if not c.get("date")]
+        dated.sort(key=lambda c: (c["date"], c.get("id") or ""), reverse=True)
+        undated.sort(key=lambda c: c.get("id") or "")
+        data["conversations"] = dated + undated
+
+        counts: dict[str, int] = {}
+        for n in data.pop("participants_raw", []) or []:
+            counts[n] = counts.get(n, 0) + 1
+        data["participants"] = [
+            {"name": n, "conversation_count": c}
+            for n, c in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        ]
+        return data
