@@ -87,6 +87,18 @@ RETURN t.name AS name,
   [(p:Person)-[:PARTICIPATED_IN]->(:Conversation)-[:ABOUT]->(t) | p.name] AS participants_raw
 """
 
+# Per-person commitments. The WHERE inside the pattern comprehension applies at
+# match time, so missing/filtered commitments produce an empty list (not the
+# all-null artifact that an OPTIONAL MATCH + collect() would).
+_PERSON_COMMITMENTS = """
+MATCH (p:Person {key: $key})
+RETURN p.name AS person,
+  [(p)-[:MADE]->(m:Commitment)-[:IN]->(c:Conversation)
+   WHERE $status IS NULL OR m.status = $status
+   | {text: m.text, status: m.status, due: m.due,
+      conversation_id: c.id, conversation_title: c.title, conversation_date: c.date}] AS commitments_raw
+"""
+
 
 class Neo4jGraphStore:
     def __init__(self, uri: str, user: str, password: str):
@@ -207,3 +219,29 @@ class Neo4jGraphStore:
             for n, c in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
         ]
         return data
+
+    async def get_person_commitments(
+        self, name: str, status: Optional[str] = None
+    ) -> Optional[list[dict]]:
+        """Commitments owned by the named person, optionally filtered by status.
+
+        Returns None when the person does not exist (→ 404), an empty list when
+        they exist but have no matching commitments. Sorted by conversation date
+        desc, with None last.
+        """
+        async with self._driver.session() as session:
+            result = await session.run(
+                _PERSON_COMMITMENTS, {"key": normalize_name(name), "status": status}
+            )
+            record = await result.single()
+        if record is None:
+            return None
+        commitments = record.data().get("commitments_raw") or []
+        dated = [c for c in commitments if c.get("conversation_date")]
+        undated = [c for c in commitments if not c.get("conversation_date")]
+        dated.sort(
+            key=lambda c: (c["conversation_date"], c.get("conversation_id") or ""),
+            reverse=True,
+        )
+        undated.sort(key=lambda c: c.get("conversation_id") or "")
+        return dated + undated

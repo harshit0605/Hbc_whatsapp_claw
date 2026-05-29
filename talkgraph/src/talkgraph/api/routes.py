@@ -36,6 +36,16 @@ async def get_person(request: Request, name: str):
     return data
 
 
+@router.get("/people/{name}/commitments")
+async def get_person_commitments(
+    request: Request, name: str, status: Optional[str] = "open"
+):
+    data = await request.app.state.graph.get_person_commitments(name, status=status)
+    if data is None:
+        raise HTTPException(status_code=404, detail="person not found")
+    return data
+
+
 @router.get("/commitments")
 async def list_commitments(request: Request, status: Optional[str] = "open"):
     return await request.app.state.graph.get_commitments(status=status)
