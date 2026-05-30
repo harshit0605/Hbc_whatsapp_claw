@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from httpx import ASGITransport
 
+from talkgraph.api.auth import get_api_token, require_api_token
 from talkgraph.api.routes import router
 
 
@@ -26,11 +27,22 @@ class _GraphStub:
         if self._verify_raises:
             raise self._verify_raises
 
+    async def get_commitments(self, status=None):
+        return []  # used as a stand-in protected route in auth tests
 
-def _app_with(graph) -> FastAPI:
+
+def _app_with(graph, *, api_token: str | None = None) -> FastAPI:
+    """Build the app. api_token=None → mount router without auth (the
+    /healthz tests), api_token="" → mount with auth dependency in dev mode,
+    api_token="secret" → mount with auth requiring that token.
+    """
     app = FastAPI()
     app.state.graph = graph
-    app.include_router(router)
+    if api_token is None:
+        app.include_router(router)
+    else:
+        app.include_router(router, dependencies=[Depends(require_api_token)])
+        app.dependency_overrides[get_api_token] = lambda: api_token
     return app
 
 
@@ -54,3 +66,51 @@ async def test_healthz_returns_503_when_neo4j_unreachable():
     body = resp.json()
     assert "neo4j unreachable" in body["detail"]
     assert "bolt: down" in body["detail"]
+
+
+# --- Bearer auth ----------------------------------------------------------
+
+
+async def test_auth_disabled_allows_unauthenticated_request():
+    """api_token="" is the dev default — every request goes through."""
+    app = _app_with(_GraphStub(), api_token="")
+    async with await _client(app) as c:
+        resp = await c.get("/commitments")
+    assert resp.status_code == 200
+
+
+async def test_auth_enabled_accepts_valid_bearer():
+    app = _app_with(_GraphStub(), api_token="s3cret")
+    async with await _client(app) as c:
+        resp = await c.get("/commitments", headers={"Authorization": "Bearer s3cret"})
+    assert resp.status_code == 200
+
+
+async def test_auth_enabled_rejects_missing_header():
+    app = _app_with(_GraphStub(), api_token="s3cret")
+    async with await _client(app) as c:
+        resp = await c.get("/commitments")
+    assert resp.status_code == 401
+
+
+async def test_auth_enabled_rejects_wrong_token():
+    app = _app_with(_GraphStub(), api_token="s3cret")
+    async with await _client(app) as c:
+        resp = await c.get("/commitments", headers={"Authorization": "Bearer wrong"})
+    assert resp.status_code == 401
+
+
+async def test_auth_enabled_rejects_wrong_scheme():
+    """`Basic <creds>` shouldn't satisfy a Bearer requirement."""
+    app = _app_with(_GraphStub(), api_token="s3cret")
+    async with await _client(app) as c:
+        resp = await c.get("/commitments", headers={"Authorization": "Basic s3cret"})
+    assert resp.status_code == 401
+
+
+async def test_healthz_remains_public_when_auth_enabled():
+    """Orchestrators need to probe without credentials."""
+    app = _app_with(_GraphStub(), api_token="s3cret")
+    async with await _client(app) as c:
+        resp = await c.get("/healthz")  # no Authorization header
+    assert resp.status_code == 200

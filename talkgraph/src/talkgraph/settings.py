@@ -17,6 +17,11 @@ class Settings(BaseSettings):
 
     data_dir: str = "./data"
 
+    # API auth — when empty, the bearer dependency is a no-op (dev mode).
+    # When set, every protected route requires Authorization: Bearer <token>.
+    # /health and /healthz stay public regardless so orchestrators can probe.
+    api_token: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

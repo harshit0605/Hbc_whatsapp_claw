@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from openai import AsyncOpenAI
 
+from .api.auth import require_api_token
 from .api.routes import router
 from .graph.store import Neo4jGraphStore
 from .pipeline.diarize import LLMDiarizer
@@ -39,7 +40,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="talkgraph", version="0.1.0", lifespan=lifespan)
-app.include_router(router)
+# Bearer auth is enforced at the router level. require_api_token short-circuits
+# on /health and /healthz so probes still work without credentials.
+app.include_router(router, dependencies=[Depends(require_api_token)])
 
 
 @app.get("/health")
