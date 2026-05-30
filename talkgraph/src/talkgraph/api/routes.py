@@ -7,6 +7,21 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 router = APIRouter()
 
 
+@router.get("/healthz")
+async def healthz(request: Request):
+    """Readiness probe: 200 when Neo4j responds, 503 otherwise.
+
+    The simpler /health (in main.py) is the liveness probe and doesn't touch
+    any dependency — process up == 200. /healthz is the readiness probe and
+    is what an orchestrator (k8s, ECS, etc.) should gate traffic on.
+    """
+    try:
+        await request.app.state.graph.verify()
+    except Exception as e:  # noqa: BLE001 — any failure means not-ready
+        raise HTTPException(status_code=503, detail=f"neo4j unreachable: {e}")
+    return {"status": "ready"}
+
+
 @router.post("/conversations")
 async def create_conversation(
     request: Request,
