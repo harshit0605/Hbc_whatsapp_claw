@@ -6,7 +6,8 @@ services:
       - "7474:7474"   # HTTP browser
       - "7687:7687"   # Bolt
     environment:
-      NEO4J_AUTH: neo4j/talkgraph-dev
+      # Single source of truth: NEO4J_PASSWORD in .env. Default keeps dev painless.
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-talkgraph-dev}
       NEO4J_PLUGINS: '[]'
     volumes:
       - neo4j-data:/data
