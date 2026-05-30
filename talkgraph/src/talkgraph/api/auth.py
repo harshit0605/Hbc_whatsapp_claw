@@ -16,9 +16,13 @@ them without credentials.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import Depends, Header, HTTPException, Request
 
 from ..settings import get_settings
+
+log = logging.getLogger(__name__)
 
 # Endpoints that must remain open even when api_token is set. /health lives
 # directly on the FastAPI app (main.py); /healthz lives on the router but is
@@ -41,4 +45,5 @@ async def require_api_token(
     if not expected:
         return  # dev mode: auth disabled
     if authorization != f"Bearer {expected}":
+        log.warning("401 on %s: invalid or missing bearer", request.url.path)
         raise HTTPException(status_code=401, detail="invalid or missing api token")

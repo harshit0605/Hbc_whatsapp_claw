@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Optional
 
 from neo4j import AsyncGraphDatabase
 
 from ..models import Insights, Transcript
+
+log = logging.getLogger(__name__)
 
 
 def normalize_name(name: str) -> str:
@@ -152,6 +155,7 @@ class Neo4jGraphStore:
             notifications_min_severity="WARNING",
             notifications_disabled_classifications=["DEPRECATION"],
         )
+        log.debug("Neo4jGraphStore initialised: uri=%s user=%s", uri, user)
 
     async def verify(self) -> None:
         await self._driver.verify_connectivity()

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
 from openai import AsyncOpenAI
 
+from ._logging import setup_logging
 from .api.auth import require_api_token
 from .api.routes import router
 from .graph.store import Neo4jGraphStore
@@ -19,10 +21,15 @@ from .storage import LocalStorage
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    setup_logging(settings.log_level)
+    log = logging.getLogger(__name__)
+    log.info("talkgraph starting (neo4j=%s, auth=%s)", settings.neo4j_uri, "on" if settings.api_token else "off")
+
     client = AsyncOpenAI(api_key=settings.openai_api_key)
     graph = Neo4jGraphStore(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password)
     await graph.verify()
     await graph.ensure_constraints()
+    log.info("neo4j reachable, constraints ensured")
 
     app.state.storage = LocalStorage(settings.data_dir)
     app.state.graph = graph
@@ -35,6 +42,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        log.info("talkgraph shutting down")
         await graph.close()
         await client.close()
 

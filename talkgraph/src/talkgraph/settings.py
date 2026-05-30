@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # /health and /healthz stay public regardless so orchestrators can probe.
     api_token: str = ""
 
+    # Standard Python logging level for talkgraph's own loggers + the root.
+    # "DEBUG" / "INFO" / "WARNING" / "ERROR".
+    log_level: str = "INFO"
+
 
 @lru_cache
 def get_settings() -> Settings:
