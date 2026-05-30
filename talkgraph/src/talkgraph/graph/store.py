@@ -141,7 +141,17 @@ RETURN t.name AS name,
 
 class Neo4jGraphStore:
     def __init__(self, uri: str, user: str, password: str):
-        self._driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
+        # WARNING-level notifications still reach the driver — but we suppress
+        # DEPRECATION specifically because Neo4j 5/6 emit them via stdout in a
+        # noisy GqlStatusObject form (Phase A saw four per ingest). B6 already
+        # fixed the only deprecation we hit; this just stops future ones from
+        # polluting CLI output. Real warnings still propagate.
+        self._driver = AsyncGraphDatabase.driver(
+            uri,
+            auth=(user, password),
+            notifications_min_severity="WARNING",
+            notifications_disabled_classifications=["DEPRECATION"],
+        )
 
     async def verify(self) -> None:
         await self._driver.verify_connectivity()
